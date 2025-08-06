@@ -4,7 +4,7 @@ import { connect } from "cloudflare:sockets";
 
 // Variables
 const rootDomain = "ahem7553.workers.dev"; // Ganti dengan domain utama kalian
-const serviceName = "bvc"; // Ganti dengan nama workers kalian
+const serviceName = "diana"; // Ganti dengan nama workers kalian
 const apiKey = ""; // Ganti dengan Global API key kalian (https://dash.cloudflare.com/profile/api-tokens)
 const apiEmail = ""; // Ganti dengan email yang kalian gunakan
 const accountID = ""; // Ganti dengan Account ID kalian (https://dash.cloudflare.com -> Klik domain yang kalian gunakan)
@@ -15,9 +15,9 @@ let cachedProxyList = [];
 
 // Constant
 // --- Telegram Bot Webhook Config ---
-const BOT_TOKEN = "7725213177:AAGmBUXqsEDGlQmsOwG6Fp_4_7ZXquAkB8I"; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
+const BOT_TOKEN = "7548104199:AAHoSQVeC3mqygvyX6mruRXL9EXEKZ5JZdQ"; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
 const WEBHOOK_PATH = "/webhook"; // Path rahasia untuk webhook
-const ADMIN_GROUP_ID = ""; // ISI CHAT ID GRUP ADMIN ANDA DI SINI
+const ADMIN_GROUP_ID = "-1002747373907"; // ISI CHAT ID GRUP ADMIN ANDA DI SINI
 // ----------------------------------
 
 // In-memory state storage for registration flow
