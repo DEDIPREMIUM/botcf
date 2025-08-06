@@ -17,7 +17,7 @@ let cachedProxyList = [];
 // --- Telegram Bot Webhook Config ---
 const BOT_TOKEN = ""; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
 const WEBHOOK_PATH = "/webhook"; // Path rahasia untuk webhook
-const ADMIN_GROUP_ID = ""; // ISI CHAT ID GRUP ADMIN ANDA DI SINI
+const ADMIN_GROUP_ID = "-1001002747373907"; // ID Grup Admin sudah diisi
 // ----------------------------------
 
 // In-memory state storage for registration flow
@@ -401,7 +401,7 @@ export default {
         if (request.method === "POST") {
           try {
             const update = await request.json();
-            await handleUpdate(update);
+            await handleUpdate(update, env); // Pass env to the handler
             return new Response("OK", { status: 200 });
           } catch (e) {
             console.error(e);
@@ -448,15 +448,15 @@ async function callTelegramApi(methodName, params) {
   return json;
 }
 
-async function handleUpdate(update) {
+async function handleUpdate(update, env) {
   if (update.message) {
-    await handleMessage(update.message);
+    await handleMessage(update.message, env);
   } else if (update.callback_query) {
-    await handleCallbackQuery(update.callback_query);
+    await handleCallbackQuery(update.callback_query, env);
   }
 }
 
-async function handleMessage(message) {
+async function handleMessage(message, env) {
   const chatId = message.chat.id;
   const state = userStates[chatId];
 
@@ -511,6 +511,9 @@ async function handleMessage(message) {
       delete userStates[chatId];
     }
 
+    // Check if user is approved
+    const isApproved = await env.APPROVED_USERS.get(chatId.toString());
+
     // Define the caption for the photo
     const caption = `
 Selamat datang di server *DIANA STORE*!
@@ -525,29 +528,35 @@ Bot ini bertujuan untuk menyediakan koneksi proksi yang aman dan stabil untuk ke
 
 Silakan pilih menu di bawah ini.
     `;
-
     const imageUrl = "https://i.postimg.cc/Kvggpvt0/b86ba0a6-87f5-4911-9982-2229e58f5d36.png";
 
-    const keyboard = {
+    // Define different keyboards based on approval status
+    const approvedKeyboard = {
       inline_keyboard: [
-        [{ text: "Dapatkan Proksi", callback_data: "get_proxies" }],
-        [{ text: "Daftar ke Admin", callback_data: "register_flow_start" }],
+        [{ text: "✅ Dapatkan Proksi", callback_data: "get_proxies" }],
         [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
       ],
     };
 
-    // Send the photo with the caption and keyboard
+    const unapprovedKeyboard = {
+        inline_keyboard: [
+          [{ text: "📝 Daftar ke Admin", callback_data: "register_flow_start" }],
+          [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
+        ],
+      };
+
+    // Send the photo with the caption and the appropriate keyboard
     await callTelegramApi("sendPhoto", {
       chat_id: chatId,
       photo: imageUrl,
       caption: caption,
       parse_mode: "Markdown",
-      reply_markup: keyboard,
+      reply_markup: isApproved ? approvedKeyboard : unapprovedKeyboard,
     });
   }
 }
 
-async function handleCallbackQuery(callbackQuery) {
+async function handleCallbackQuery(callbackQuery, env) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const data = callbackQuery.data;
@@ -635,6 +644,11 @@ async function handleCallbackQuery(callbackQuery) {
 
     // Notify the original user
     await callTelegramApi("sendMessage", { chat_id: userId, text: userMessage });
+
+    // If approved, save user ID to KV
+    if (action === "approve") {
+      await env.APPROVED_USERS.put(userId, "true");
+    }
 
     // Edit the message in the admin group to show it's been handled
     await callTelegramApi("editMessageText", {
