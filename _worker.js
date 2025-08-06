@@ -474,7 +474,7 @@ async function handleCallbackQuery(callbackQuery) {
   const messageId = callbackQuery.message.message_id;
   const data = callbackQuery.data;
 
-  // Acknowledge the callback query first
+  // Acknowledge the callback query to remove the "loading" state on the button
   await callTelegramApi("answerCallbackQuery", { callback_query_id: callbackQuery.id });
 
   if (data === "start_menu") {
@@ -485,18 +485,12 @@ async function handleCallbackQuery(callbackQuery) {
         [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
       ],
     };
-    await callTelegramApi("editMessageText", {
-      chat_id: chatId,
-      message_id: messageId,
-      text: text,
-      reply_markup: keyboard,
-    });
+    // Edit the existing message to show the main menu
+    await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: text, reply_markup: keyboard });
+
   } else if (data === "get_proxies") {
-    await callTelegramApi("editMessageText", {
-      chat_id: chatId,
-      message_id: messageId,
-      text: "Mengambil daftar negara yang tersedia...",
-    });
+    // Edit the message to show "Fetching countries..."
+    await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: "Mengambil daftar negara yang tersedia..." });
 
     const kvProxyList = await getKVProxyList();
     const countryCodes = Object.keys(kvProxyList);
@@ -506,41 +500,47 @@ async function handleCallbackQuery(callbackQuery) {
     });
 
     const buttonRows = [];
-    const chunkSize = 4;
+    const chunkSize = 4; // 4 buttons per row
     for (let i = 0; i < countryButtons.length; i += chunkSize) {
       buttonRows.push(countryButtons.slice(i, i + chunkSize));
     }
     buttonRows.push([{ text: "Kembali ke Menu Utama", callback_data: "start_menu" }]);
 
+    // Edit the message again to show the country selection
     await callTelegramApi("editMessageText", {
       chat_id: chatId,
       message_id: messageId,
       text: "Silakan pilih negara untuk proksi yang Anda inginkan:",
       reply_markup: { inline_keyboard: buttonRows },
     });
+
   } else if (data.startsWith("get_country_")) {
     const countryCode = data.replace("get_country_", "");
+    // Let the user know we are fetching the proxies
     await callTelegramApi("editMessageText", {
       chat_id: chatId,
       message_id: messageId,
       text: `Mencari proksi untuk negara ${countryCode}...`,
     });
 
-    // We can call the internal API function directly
     const proxies = await getProxiesForApi(countryCode, 15);
-    let proxyMessage = "Tidak ada proksi yang ditemukan.";
-    if (proxies.length > 0) {
-      proxyMessage = `Berikut adalah proksi untuk negara ${countryCode}:\n\n\`\`\`\n${proxies.join("\n")}\n\`\`\``;
+
+    if (proxies.length === 0) {
+      await callTelegramApi("sendMessage", { chat_id: chatId, text: "Tidak ada proksi yang ditemukan untuk negara ini." });
+    } else {
+      // Send each proxy link as a separate message for easy copying
+      for (const proxy of proxies) {
+        await callTelegramApi("sendMessage", {
+          chat_id: chatId,
+          text: `\`${proxy}\``, // Send each link in a code block
+          parse_mode: "MarkdownV2",
+        });
+      }
+      // Send a confirmation message after sending all proxies
+      await callTelegramApi("sendMessage", { chat_id: chatId, text: `Selesai! ${proxies.length} proksi telah dikirim.` });
     }
 
-    await callTelegramApi("editMessageText", {
-      chat_id: chatId,
-      message_id: messageId,
-      text: proxyMessage,
-      parse_mode: "MarkdownV2",
-    });
-
-    // Show the menu again below the results
+    // Show the menu again for further actions
     await callTelegramApi("sendMessage", {
         chat_id: chatId,
         text: 'Pilih tindakan selanjutnya:',
