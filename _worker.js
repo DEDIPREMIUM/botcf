@@ -14,6 +14,10 @@ let proxyIP = "";
 let cachedProxyList = [];
 
 // Constant
+// --- Telegram Bot Webhook Config ---
+const BOT_TOKEN = ""; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
+const WEBHOOK_PATH = "/webhook"; // Path rahasia untuk webhook
+// ----------------------------------
 const APP_DOMAIN = `${serviceName}.${rootDomain}`;
 const PORTS = [443, 80];
 const PROTOCOLS = [reverse("najort"), reverse("sselv"), reverse("ss")];
@@ -388,11 +392,24 @@ export default {
             }
           );
         }
+      } else if (url.pathname === WEBHOOK_PATH) {
+        if (request.method === "POST") {
+          try {
+            const update = await request.json();
+            await handleUpdate(update);
+            return new Response("OK", { status: 200 });
+          } catch (e) {
+            console.error(e);
+            return new Response("Invalid Request", { status: 400 });
+          }
+        }
+        return new Response("POST requests only", { status: 405 });
       }
 
       const targetReverseProxy = env.REVERSE_PROXY_TARGET || "example.com";
       return await reverseProxy(request, targetReverseProxy);
     } catch (err) {
+      console.error(err);
       return new Response(`An error occurred: ${err.toString()}`, {
         status: 500,
         headers: {
@@ -402,6 +419,165 @@ export default {
     }
   },
 };
+
+// --- Telegram Webhook Handlers ---
+
+/**
+ * Sends a request to the Telegram Bot API.
+ * @param {string} methodName The API method to call (e.g., "sendMessage").
+ * @param {object} params The parameters to send with the request.
+ */
+async function callTelegramApi(methodName, params) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/${methodName}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(params),
+  });
+  const json = await response.json();
+  if (!json.ok) {
+    console.error("Telegram API Error:", json.description);
+  }
+  return json;
+}
+
+async function handleUpdate(update) {
+  if (update.message) {
+    await handleMessage(update.message);
+  } else if (update.callback_query) {
+    await handleCallbackQuery(update.callback_query);
+  }
+}
+
+async function handleMessage(message) {
+  const chatId = message.chat.id;
+  if (message.text === "/start") {
+    const text = "Selamat datang di Nautica Proxy Bot!\n\nSilakan pilih salah satu menu di bawah ini:";
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "Dapatkan Proksi", callback_data: "get_proxies" }],
+        [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
+      ],
+    };
+    await callTelegramApi("sendMessage", {
+      chat_id: chatId,
+      text: text,
+      reply_markup: keyboard,
+    });
+  }
+}
+
+async function handleCallbackQuery(callbackQuery) {
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const data = callbackQuery.data;
+
+  // Acknowledge the callback query first
+  await callTelegramApi("answerCallbackQuery", { callback_query_id: callbackQuery.id });
+
+  if (data === "start_menu") {
+    const text = "Selamat datang di Nautica Proxy Bot!\n\nSilakan pilih salah satu menu di bawah ini:";
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "Dapatkan Proksi", callback_data: "get_proxies" }],
+        [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
+      ],
+    };
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: text,
+      reply_markup: keyboard,
+    });
+  } else if (data === "get_proxies") {
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: "Mengambil daftar negara yang tersedia...",
+    });
+
+    const kvProxyList = await getKVProxyList();
+    const countryCodes = Object.keys(kvProxyList);
+    const countryButtons = countryCodes.map((code) => {
+      const flag = code.toUpperCase().split("").map((char) => String.fromCodePoint(127397 + char.charCodeAt(0))).join("");
+      return { text: `${flag} ${code}`, callback_data: `get_country_${code}` };
+    });
+
+    const buttonRows = [];
+    const chunkSize = 4;
+    for (let i = 0; i < countryButtons.length; i += chunkSize) {
+      buttonRows.push(countryButtons.slice(i, i + chunkSize));
+    }
+    buttonRows.push([{ text: "Kembali ke Menu Utama", callback_data: "start_menu" }]);
+
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: "Silakan pilih negara untuk proksi yang Anda inginkan:",
+      reply_markup: { inline_keyboard: buttonRows },
+    });
+  } else if (data.startsWith("get_country_")) {
+    const countryCode = data.replace("get_country_", "");
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: `Mencari proksi untuk negara ${countryCode}...`,
+    });
+
+    // We can call the internal API function directly
+    const proxies = await getProxiesForApi(countryCode, 15);
+    let proxyMessage = "Tidak ada proksi yang ditemukan.";
+    if (proxies.length > 0) {
+      proxyMessage = `Berikut adalah proksi untuk negara ${countryCode}:\n\n\`\`\`\n${proxies.join("\n")}\n\`\`\``;
+    }
+
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: proxyMessage,
+      parse_mode: "MarkdownV2",
+    });
+
+    // Show the menu again below the results
+    await callTelegramApi("sendMessage", {
+        chat_id: chatId,
+        text: 'Pilih tindakan selanjutnya:',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: "Pilih Negara Lain", callback_data: "get_proxies" }],
+                [{ text: "Kembali ke Menu Utama", callback_data: "start_menu" }]
+            ]
+        }
+    });
+  }
+}
+
+// Helper function to get proxies, adapted from the existing API logic
+async function getProxiesForApi(countryCode, limit) {
+  const proxyList = await getProxyList();
+  const filtered = proxyList.filter(p => p.country === countryCode);
+  shuffleArray(filtered);
+
+  const result = [];
+  const uuid = crypto.randomUUID();
+  for (const proxy of filtered) {
+    if (result.length >= limit) break;
+    const uri = new URL(`${reverse("najort")}://${APP_DOMAIN}`);
+    uri.searchParams.set("encryption", "none");
+    uri.searchParams.set("type", "ws");
+    uri.searchParams.set("host", APP_DOMAIN);
+    uri.port = "443";
+    uri.username = uuid;
+    uri.searchParams.set("security", "tls");
+    uri.searchParams.set("sni", APP_DOMAIN);
+    uri.searchParams.set("path", `/${proxy.proxyIP}-${proxy.proxyPort}`);
+    uri.hash = `${result.length + 1} ${getFlagEmoji(proxy.country)} ${proxy.org} WS TLS [${serviceName}]`;
+    result.push(uri.toString());
+  }
+  return result;
+}
 
 async function websocketHandler(request) {
   const webSocketPair = new WebSocketPair();
