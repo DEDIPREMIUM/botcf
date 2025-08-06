@@ -17,7 +17,12 @@ let cachedProxyList = [];
 // --- Telegram Bot Webhook Config ---
 const BOT_TOKEN = ""; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
 const WEBHOOK_PATH = "/webhook"; // Path rahasia untuk webhook
+const ADMIN_GROUP_ID = ""; // ISI CHAT ID GRUP ADMIN ANDA DI SINI
 // ----------------------------------
+
+// In-memory state storage for registration flow
+const userStates = {}; // e.g., { "chat_id": { step: "awaiting_name", data: {} } }
+
 const APP_DOMAIN = `${serviceName}.${rootDomain}`;
 const PORTS = [443, 80];
 const PROTOCOLS = [reverse("najort"), reverse("sselv"), reverse("ss")];
@@ -453,17 +458,90 @@ async function handleUpdate(update) {
 
 async function handleMessage(message) {
   const chatId = message.chat.id;
+  const state = userStates[chatId];
+
+  // Handle registration flow if user is in a specific state
+  if (state) {
+    switch (state.step) {
+      case "awaiting_name":
+        state.data.name = message.text;
+        state.step = "awaiting_email";
+        await callTelegramApi("sendMessage", { chat_id: chatId, text: "Terima kasih. Sekarang, silakan kirimkan alamat email Anda:" });
+        return; // Stop further processing
+      case "awaiting_email":
+        state.data.email = message.text;
+        state.step = "awaiting_reason";
+        await callTelegramApi("sendMessage", { chat_id: chatId, text: "Bagus. Terakhir, jelaskan secara singkat permohonan atau alasan Anda mendaftar:" });
+        return; // Stop further processing
+      case "awaiting_reason":
+        state.data.reason = message.text;
+        state.data.username = message.from.username || "tidak ada";
+        state.data.userId = message.from.id;
+
+        // Send application to admin group
+        if (ADMIN_GROUP_ID) {
+          const { name, email, reason, username, userId } = state.data;
+          const adminText = `🔔 Permohonan Baru 🔔\n\nDari: ${message.from.first_name} ${message.from.last_name || ""}\nUsername: @${username}\nUser ID: \`${userId}\`\n\nNama: ${name}\nEmail: ${email}\n\nPermohonan:\n${reason}`;
+          const adminKeyboard = {
+            inline_keyboard: [
+              [
+                { text: "✅ Setuju", callback_data: `admin_approve_${userId}` },
+                { text: "❌ Tolak", callback_data: `admin_reject_${userId}` },
+              ],
+            ],
+          };
+          await callTelegramApi("sendMessage", {
+            chat_id: ADMIN_GROUP_ID,
+            text: adminText,
+            reply_markup: adminKeyboard,
+            parse_mode: "MarkdownV2",
+          });
+        }
+
+        // Notify user and clear state
+        await callTelegramApi("sendMessage", { chat_id: chatId, text: "Terima kasih! Permohonan Anda telah dikirim ke admin untuk ditinjau." });
+        delete userStates[chatId];
+        return; // Stop further processing
+    }
+  }
+
   if (message.text === "/start") {
-    const text = "Selamat datang di Nautica Proxy Bot!\n\nSilakan pilih salah satu menu di bawah ini:";
+    // Clear any previous state if user restarts
+    if (state) {
+      delete userStates[chatId];
+    }
+
+    // Define the caption for the photo
+    const caption = `
+Selamat datang di server *DIANA STORE*!
+
+*Peraturan Bot:*
+1. Gunakan bot dengan bijak.
+2. Dilarang melakukan spam.
+3. Patuhi arahan dari admin.
+
+*Tujuan Bot:*
+Bot ini bertujuan untuk menyediakan koneksi proksi yang aman dan stabil untuk kebutuhan Anda.
+
+Silakan pilih menu di bawah ini.
+    `;
+
+    const imageUrl = "https://i.postimg.cc/Kvggpvt0/b86ba0a6-87f5-4911-9982-2229e58f5d36.png";
+
     const keyboard = {
       inline_keyboard: [
         [{ text: "Dapatkan Proksi", callback_data: "get_proxies" }],
+        [{ text: "Daftar ke Admin", callback_data: "register_flow_start" }],
         [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
       ],
     };
-    await callTelegramApi("sendMessage", {
+
+    // Send the photo with the caption and keyboard
+    await callTelegramApi("sendPhoto", {
       chat_id: chatId,
-      text: text,
+      photo: imageUrl,
+      caption: caption,
+      parse_mode: "Markdown",
       reply_markup: keyboard,
     });
   }
@@ -482,6 +560,7 @@ async function handleCallbackQuery(callbackQuery) {
     const keyboard = {
       inline_keyboard: [
         [{ text: "Dapatkan Proksi", callback_data: "get_proxies" }],
+        [{ text: "Daftar ke Admin", callback_data: "register_flow_start" }],
         [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
       ],
     };
@@ -536,6 +615,74 @@ async function handleCallbackQuery(callbackQuery) {
     };
     await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: text, reply_markup: keyboard });
 
+  } else if (data.startsWith("admin_")) {
+    // Handle admin actions
+    const parts = data.split("_");
+    const action = parts[1]; // 'approve' or 'reject'
+    const userId = parts[2];
+    const adminName = callbackQuery.from.first_name;
+
+    let userMessage = "";
+    let newAdminText = "";
+
+    if (action === "approve") {
+      userMessage = "Selamat! Permohonan Anda telah disetujui oleh admin.";
+      newAdminText = `${callbackQuery.message.text}\n\n✅ Disetujui oleh ${adminName}.`;
+    } else {
+      userMessage = "Mohon maaf, permohonan Anda telah ditolak oleh admin.";
+      newAdminText = `${callbackQuery.message.text}\n\n❌ Ditolak oleh ${adminName}.`;
+    }
+
+    // Notify the original user
+    await callTelegramApi("sendMessage", { chat_id: userId, text: userMessage });
+
+    // Edit the message in the admin group to show it's been handled
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: newAdminText,
+      parse_mode: "MarkdownV2",
+      reply_markup: { inline_keyboard: [] }, // Remove buttons
+    });
+
+  } else if (data.startsWith("get_proxy_")) {
+    const parts = data.split("_");
+    const countryCode = parts[2];
+    const protocol = parts[3];
+    const security = parts[4]; // 'tls' or 'ntls'
+
+    const protocolName = protocol.toUpperCase();
+    const securityName = security === 'tls' ? 'TLS' : 'Non-TLS';
+
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: `Mencari proksi untuk ${countryCode} dengan protokol ${protocolName} ${securityName}...`,
+    });
+
+    const proxies = await getProxiesForApi(countryCode, 15, protocol, security);
+
+    if (proxies.length === 0) {
+      await callTelegramApi("sendMessage", { chat_id: chatId, text: "Tidak ada proksi yang ditemukan untuk kombinasi ini." });
+    } else {
+      for (const proxy of proxies) {
+        await callTelegramApi("sendMessage", {
+          chat_id: chatId,
+          text: `\`${proxy}\``,
+          parse_mode: "MarkdownV2",
+        });
+      }
+      await callTelegramApi("sendMessage", { chat_id: chatId, text: `Selesai! ${proxies.length} proksi ${protocolName} ${securityName} telah dikirim.` });
+    }
+
+  } else if (data === "register_flow_start") {
+    // Start the registration flow
+    userStates[chatId] = { step: "awaiting_name", data: {} };
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: "Anda memulai proses pendaftaran.\n\nSilakan kirimkan nama lengkap Anda:",
+    });
   } else if (data.startsWith("get_proxy_")) {
     const parts = data.split("_");
     const countryCode = parts[2];
