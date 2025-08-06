@@ -17,7 +17,7 @@ let cachedProxyList = [];
 // --- Telegram Bot Webhook Config ---
 const BOT_TOKEN = ""; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
 const WEBHOOK_PATH = "/webhook"; // Path rahasia untuk webhook
-const ADMIN_GROUP_ID = "-1001002747373907"; // ID Grup Admin sudah diisi
+const ADMIN_GROUP_ID = "-1002747373907"; // ID Grup Admin sudah diisi
 // ----------------------------------
 
 // In-memory state storage for registration flow
@@ -565,9 +565,9 @@ async function handleCallbackQuery(callbackQuery, env) {
   await callTelegramApi("answerCallbackQuery", { callback_query_id: callbackQuery.id });
 
   if (data === "start_menu") {
-    const text = "Selamat datang di DIANA STORE!\n\nSilakan pilih salah satu menu di bawah ini:";
     // Re-check approval status when user returns to main menu
     const isApproved = await env.APPROVED_USERS.get(chatId.toString());
+    const text = "Selamat datang di DIANA STORE!\n\nSilakan pilih salah satu menu di bawah ini:";
     const keyboard = isApproved
       ? {
           inline_keyboard: [
