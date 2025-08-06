@@ -3,8 +3,8 @@ import { connect } from "cloudflare:sockets";
 // import { Buffer } from "node:buffer";
 
 // Variables
-const rootDomain = "ahem7553.workers.dev"; // Ganti dengan domain utama kalian
-const serviceName = "diana"; // Ganti dengan nama workers kalian
+const rootDomain = "foolvpn.me"; // Ganti dengan domain utama kalian
+const serviceName = "nautica"; // Ganti dengan nama workers kalian
 const apiKey = ""; // Ganti dengan Global API key kalian (https://dash.cloudflare.com/profile/api-tokens)
 const apiEmail = ""; // Ganti dengan email yang kalian gunakan
 const accountID = ""; // Ganti dengan Account ID kalian (https://dash.cloudflare.com -> Klik domain yang kalian gunakan)
@@ -15,7 +15,7 @@ let cachedProxyList = [];
 
 // Constant
 // --- Telegram Bot Webhook Config ---
-const BOT_TOKEN = "7548104199:AAHoSQVeC3mqygvyX6mruRXL9EXEKZ5JZdQ"; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
+const BOT_TOKEN = ""; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
 const WEBHOOK_PATH = "/webhook"; // Path rahasia untuk webhook
 // ----------------------------------
 const APP_DOMAIN = `${serviceName}.${rootDomain}`;
@@ -516,28 +516,54 @@ async function handleCallbackQuery(callbackQuery) {
 
   } else if (data.startsWith("get_country_")) {
     const countryCode = data.replace("get_country_", "");
-    // Let the user know we are fetching the proxies
+    const text = `Anda memilih negara ${countryCode}. Silakan pilih jenis proksi:`;
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: "Trojan TLS", callback_data: `get_proxy_${countryCode}_trojan_tls` },
+          { text: "Trojan Non-TLS", callback_data: `get_proxy_${countryCode}_trojan_ntls` },
+        ],
+        [
+          { text: "VLESS TLS", callback_data: `get_proxy_${countryCode}_vless_tls` },
+          { text: "VLESS Non-TLS", callback_data: `get_proxy_${countryCode}_vless_ntls` },
+        ],
+        [
+          { text: "SS TLS", callback_data: `get_proxy_${countryCode}_ss_tls` },
+          { text: "SS Non-TLS", callback_data: `get_proxy_${countryCode}_ss_ntls` },
+        ],
+        [{ text: "<< Kembali (Pilih Negara)", callback_data: "get_proxies" }],
+      ],
+    };
+    await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: text, reply_markup: keyboard });
+
+  } else if (data.startsWith("get_proxy_")) {
+    const parts = data.split("_");
+    const countryCode = parts[2];
+    const protocol = parts[3];
+    const security = parts[4]; // 'tls' or 'ntls'
+
+    const protocolName = protocol.toUpperCase();
+    const securityName = security === 'tls' ? 'TLS' : 'Non-TLS';
+
     await callTelegramApi("editMessageText", {
       chat_id: chatId,
       message_id: messageId,
-      text: `Mencari proksi untuk negara ${countryCode}...`,
+      text: `Mencari proksi untuk ${countryCode} dengan protokol ${protocolName} ${securityName}...`,
     });
 
-    const proxies = await getProxiesForApi(countryCode, 15);
+    const proxies = await getProxiesForApi(countryCode, 15, protocol, security);
 
     if (proxies.length === 0) {
-      await callTelegramApi("sendMessage", { chat_id: chatId, text: "Tidak ada proksi yang ditemukan untuk negara ini." });
+      await callTelegramApi("sendMessage", { chat_id: chatId, text: "Tidak ada proksi yang ditemukan untuk kombinasi ini." });
     } else {
-      // Send each proxy link as a separate message for easy copying
       for (const proxy of proxies) {
         await callTelegramApi("sendMessage", {
           chat_id: chatId,
-          text: `\`${proxy}\``, // Send each link in a code block
+          text: `\`${proxy}\``,
           parse_mode: "MarkdownV2",
         });
       }
-      // Send a confirmation message after sending all proxies
-      await callTelegramApi("sendMessage", { chat_id: chatId, text: `Selesai! ${proxies.length} proksi telah dikirim.` });
+      await callTelegramApi("sendMessage", { chat_id: chatId, text: `Selesai! ${proxies.length} proksi ${protocolName} ${securityName} telah dikirim.` });
     }
 
     // Show the menu again for further actions
@@ -555,25 +581,49 @@ async function handleCallbackQuery(callbackQuery) {
 }
 
 // Helper function to get proxies, adapted from the existing API logic
-async function getProxiesForApi(countryCode, limit) {
+async function getProxiesForApi(countryCode, limit, protocol, security) {
   const proxyList = await getProxyList();
   const filtered = proxyList.filter(p => p.country === countryCode);
   shuffleArray(filtered);
+
+  // Map protocol names from bot to worker's internal names
+  const protocolMap = {
+    'trojan': reverse("najort"),
+    'vless': reverse("sselv"),
+    'ss': reverse("ss")
+  };
+  const proto = protocolMap[protocol] || reverse("najort");
+
+  const port = security === 'tls' ? '443' : '80';
+  const securitySetting = security === 'tls' ? 'tls' : 'none';
 
   const result = [];
   const uuid = crypto.randomUUID();
   for (const proxy of filtered) {
     if (result.length >= limit) break;
-    const uri = new URL(`${reverse("najort")}://${APP_DOMAIN}`);
-    uri.searchParams.set("encryption", "none");
+
+    const uri = new URL(`${proto}://${APP_DOMAIN}`);
+    uri.port = port;
     uri.searchParams.set("type", "ws");
     uri.searchParams.set("host", APP_DOMAIN);
-    uri.port = "443";
-    uri.username = uuid;
-    uri.searchParams.set("security", "tls");
-    uri.searchParams.set("sni", APP_DOMAIN);
     uri.searchParams.set("path", `/${proxy.proxyIP}-${proxy.proxyPort}`);
-    uri.hash = `${result.length + 1} ${getFlagEmoji(proxy.country)} ${proxy.org} WS TLS [${serviceName}]`;
+    uri.searchParams.set("security", securitySetting);
+
+    if (proto === reverse("ss")) {
+      uri.username = btoa(`none:${uuid}`);
+      uri.searchParams.set(
+        "plugin",
+        `v2ray-plugin${security === 'tls' ? ";tls" : ""};mux=0;mode=websocket;path=/${proxy.proxyIP}-${proxy.proxyPort};host=${APP_DOMAIN}`
+      );
+    } else {
+      uri.username = uuid;
+    }
+
+    if (security === 'tls') {
+        uri.searchParams.set("sni", APP_DOMAIN);
+    }
+
+    uri.hash = `${result.length + 1} ${getFlagEmoji(proxy.country)} ${proxy.org} WS ${security === 'tls' ? 'TLS' : 'NTLS'} [${serviceName}]`;
     result.push(uri.toString());
   }
   return result;
