@@ -15,7 +15,7 @@ let cachedProxyList = [];
 
 // Constant
 // --- Telegram Bot Webhook Config ---
-const BOT_TOKEN = ""; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
+const BOT_TOKEN = "7725213177:AAGmBUXqsEDGlQmsOwG6Fp_4_7ZXquAkB8I"; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
 const WEBHOOK_PATH = "/webhook"; // Path rahasia untuk webhook
 // ----------------------------------
 const APP_DOMAIN = `${serviceName}.${rootDomain}`;
