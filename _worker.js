@@ -15,9 +15,9 @@ let cachedProxyList = [];
 
 // Constant
 // --- Telegram Bot Webhook Config ---
-const BOT_TOKEN = "7548104199:AAHoSQVeC3mqygvyX6mruRXL9EXEKZ5JZdQ"; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
+const BOT_TOKEN = ""; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
 const WEBHOOK_PATH = "/webhook"; // Path rahasia untuk webhook
-const ADMIN_GROUP_ID = "-1002747373907"; // ID Grup Admin sudah diisi
+const ADMIN_GROUP_ID = "-1001002747373907"; // ID Grup Admin sudah diisi
 // ----------------------------------
 
 // In-memory state storage for registration flow
@@ -565,15 +565,22 @@ async function handleCallbackQuery(callbackQuery, env) {
   await callTelegramApi("answerCallbackQuery", { callback_query_id: callbackQuery.id });
 
   if (data === "start_menu") {
-    const text = "Selamat datang di Nautica Proxy Bot!\n\nSilakan pilih salah satu menu di bawah ini:";
-    const keyboard = {
-      inline_keyboard: [
-        [{ text: "Dapatkan Proksi", callback_data: "get_proxies" }],
-        [{ text: "Daftar ke Admin", callback_data: "register_flow_start" }],
-        [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
-      ],
-    };
-    // Edit the existing message to show the main menu
+    const text = "Selamat datang di DIANA STORE!\n\nSilakan pilih salah satu menu di bawah ini:";
+    // Re-check approval status when user returns to main menu
+    const isApproved = await env.APPROVED_USERS.get(chatId.toString());
+    const keyboard = isApproved
+      ? {
+          inline_keyboard: [
+            [{ text: "✅ Dapatkan Proksi", callback_data: "get_proxies" }],
+            [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
+          ],
+        }
+      : {
+          inline_keyboard: [
+            [{ text: "📝 Daftar ke Admin", callback_data: "register_flow_start" }],
+            [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
+          ],
+        };
     await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: text, reply_markup: keyboard });
 
   } else if (data === "get_proxies") {
@@ -592,7 +599,7 @@ async function handleCallbackQuery(callbackQuery, env) {
     for (let i = 0; i < countryButtons.length; i += chunkSize) {
       buttonRows.push(countryButtons.slice(i, i + chunkSize));
     }
-    buttonRows.push([{ text: "Kembali ke Menu Utama", callback_data: "start_menu" }]);
+    buttonRows.push([{ text: "<< Kembali ke Menu Utama", callback_data: "start_menu" }]);
 
     // Edit the message again to show the country selection
     await callTelegramApi("editMessageText", {
@@ -624,6 +631,15 @@ async function handleCallbackQuery(callbackQuery, env) {
     };
     await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: text, reply_markup: keyboard });
 
+  } else if (data === "register_flow_start") {
+    // Start the registration flow
+    userStates[chatId] = { step: "awaiting_name", data: {} };
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: "Anda memulai proses pendaftaran.\n\nSilakan kirimkan nama lengkap Anda:",
+    });
+
   } else if (data.startsWith("admin_")) {
     // Handle admin actions
     const parts = data.split("_");
@@ -635,7 +651,8 @@ async function handleCallbackQuery(callbackQuery, env) {
     let newAdminText = "";
 
     if (action === "approve") {
-      userMessage = "Selamat! Permohonan Anda telah disetujui oleh admin.";
+      await env.APPROVED_USERS.put(userId, "true"); // Save to KV
+      userMessage = "Selamat! Permohonan Anda telah disetujui oleh admin. Silakan ketik /start untuk melihat menu baru.";
       newAdminText = `${callbackQuery.message.text}\n\n✅ Disetujui oleh ${adminName}.`;
     } else {
       userMessage = "Mohon maaf, permohonan Anda telah ditolak oleh admin.";
@@ -644,11 +661,6 @@ async function handleCallbackQuery(callbackQuery, env) {
 
     // Notify the original user
     await callTelegramApi("sendMessage", { chat_id: userId, text: userMessage });
-
-    // If approved, save user ID to KV
-    if (action === "approve") {
-      await env.APPROVED_USERS.put(userId, "true");
-    }
 
     // Edit the message in the admin group to show it's been handled
     await callTelegramApi("editMessageText", {
@@ -659,44 +671,6 @@ async function handleCallbackQuery(callbackQuery, env) {
       reply_markup: { inline_keyboard: [] }, // Remove buttons
     });
 
-  } else if (data.startsWith("get_proxy_")) {
-    const parts = data.split("_");
-    const countryCode = parts[2];
-    const protocol = parts[3];
-    const security = parts[4]; // 'tls' or 'ntls'
-
-    const protocolName = protocol.toUpperCase();
-    const securityName = security === 'tls' ? 'TLS' : 'Non-TLS';
-
-    await callTelegramApi("editMessageText", {
-      chat_id: chatId,
-      message_id: messageId,
-      text: `Mencari proksi untuk ${countryCode} dengan protokol ${protocolName} ${securityName}...`,
-    });
-
-    const proxies = await getProxiesForApi(countryCode, 15, protocol, security);
-
-    if (proxies.length === 0) {
-      await callTelegramApi("sendMessage", { chat_id: chatId, text: "Tidak ada proksi yang ditemukan untuk kombinasi ini." });
-    } else {
-      for (const proxy of proxies) {
-        await callTelegramApi("sendMessage", {
-          chat_id: chatId,
-          text: `\`${proxy}\``,
-          parse_mode: "MarkdownV2",
-        });
-      }
-      await callTelegramApi("sendMessage", { chat_id: chatId, text: `Selesai! ${proxies.length} proksi ${protocolName} ${securityName} telah dikirim.` });
-    }
-
-  } else if (data === "register_flow_start") {
-    // Start the registration flow
-    userStates[chatId] = { step: "awaiting_name", data: {} };
-    await callTelegramApi("editMessageText", {
-      chat_id: chatId,
-      message_id: messageId,
-      text: "Anda memulai proses pendaftaran.\n\nSilakan kirimkan nama lengkap Anda:",
-    });
   } else if (data.startsWith("get_proxy_")) {
     const parts = data.split("_");
     const countryCode = parts[2];
