@@ -14,6 +14,12 @@ let proxyIP = "";
 let cachedProxyList = [];
 
 // Constant
+// --- Telegram Bot Webhook Config ---
+const BOT_TOKEN = ""; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
+const WEBHOOK_PATH = "/webhook"; // Path rahasia untuk webhook
+const ADMIN_GROUP_ID = "-1002747373907"; // ID Grup Admin sudah diisi
+// ----------------------------------
+
 const APP_DOMAIN = `${serviceName}.${rootDomain}`;
 const PORTS = [443, 80];
 const PROTOCOLS = [reverse("najort"), reverse("sselv"), reverse("ss")];
@@ -388,11 +394,24 @@ export default {
             }
           );
         }
+      } else if (url.pathname === WEBHOOK_PATH) {
+        if (request.method === "POST") {
+          try {
+            const update = await request.json();
+            await handleUpdate(update);
+            return new Response("OK", { status: 200 });
+          } catch (e) {
+            console.error(e);
+            return new Response("Invalid Request", { status: 400 });
+          }
+        }
+        return new Response("POST requests only", { status: 405 });
       }
 
       const targetReverseProxy = env.REVERSE_PROXY_TARGET || "example.com";
       return await reverseProxy(request, targetReverseProxy);
     } catch (err) {
+      console.error(err);
       return new Response(`An error occurred: ${err.toString()}`, {
         status: 500,
         headers: {
@@ -402,6 +421,253 @@ export default {
     }
   },
 };
+
+// --- Telegram Webhook Handlers ---
+
+/**
+ * Sends a request to the Telegram Bot API.
+ * @param {string} methodName The API method to call (e.g., "sendMessage").
+ * @param {object} params The parameters to send with the request.
+ */
+async function callTelegramApi(methodName, params) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/${methodName}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(params),
+  });
+  const json = await response.json();
+  if (!json.ok) {
+    console.error("Telegram API Error:", json.description);
+  }
+  return json;
+}
+
+async function handleUpdate(update, env) {
+  if (update.callback_query) {
+    await handleCallbackQuery(update.callback_query, env);
+  } else if (update.message) {
+    await handleMessage(update.message, env);
+  }
+}
+
+async function handleMessage(message) {
+  const chatId = message.chat.id;
+  if (message.text === "/start") {
+    const user = message.from;
+    await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) memulai bot.`);
+
+    const caption = `
+Selamat datang di server *DIANA STORE*!
+
+*Peraturan Bot:*
+1. Gunakan bot dengan bijak.
+2. Dilarang melakukan spam.
+3. Patuhi arahan dari admin.
+
+*Tujuan Bot:*
+Bot ini bertujuan untuk menyediakan koneksi proksi yang aman dan stabil untuk kebutuhan Anda.
+
+Silakan pilih menu di bawah ini.
+    `;
+    const imageUrl = "https://i.postimg.cc/Kvggpvt0/b86ba0a6-87f5-4911-9982-2229e58f5d36.png";
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "✅ Saya Setuju & Lanjutkan", callback_data: "user_agreed" }],
+      ],
+    };
+    await callTelegramApi("sendPhoto", {
+      chat_id: chatId,
+      photo: imageUrl,
+      caption: caption,
+      parse_mode: "Markdown",
+      reply_markup: keyboard,
+    });
+  }
+}
+
+async function handleCallbackQuery(callbackQuery, env) {
+  await logToAdmin(`Callback query received: ${callbackQuery.data}`);
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const data = callbackQuery.data;
+  const user = callbackQuery.from;
+
+  // Acknowledge the callback query to remove the "loading" state on the button
+  await callTelegramApi("answerCallbackQuery", { callback_query_id: callbackQuery.id });
+
+  if (data === "user_agreed" || data === "start_menu") {
+    if (data === "user_agreed") {
+        await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) menyetujui peraturan.`);
+    }
+    const text = "Silakan pilih salah satu menu di bawah ini:";
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "Dapatkan Proksi", callback_data: "get_proxies" }],
+        [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
+      ],
+    };
+    // Edit the existing message to show the main menu
+    await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: text, reply_markup: keyboard });
+
+  } else if (data === "get_proxies") {
+    await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) meminta daftar negara.`);
+
+    // Edit the message to show "Fetching countries..."
+    await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: "Mengambil daftar negara yang tersedia..." });
+
+    const kvProxyList = await getKVProxyList();
+    const countryCodes = Object.keys(kvProxyList);
+    const countryButtons = countryCodes.map((code) => {
+      const flag = code.toUpperCase().split("").map((char) => String.fromCodePoint(127397 + char.charCodeAt(0))).join("");
+      return { text: `${flag} ${code}`, callback_data: `get_country_${code}` };
+    });
+
+    const buttonRows = [];
+    const chunkSize = 4; // 4 buttons per row
+    for (let i = 0; i < countryButtons.length; i += chunkSize) {
+      buttonRows.push(countryButtons.slice(i, i + chunkSize));
+    }
+    buttonRows.push([{ text: "<< Kembali ke Menu Utama", callback_data: "start_menu" }]);
+
+    // Edit the message again to show the country selection
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: "Silakan pilih negara untuk proksi yang Anda inginkan:",
+      reply_markup: { inline_keyboard: buttonRows },
+    });
+
+  } else if (data.startsWith("get_country_")) {
+    const countryCode = data.replace("get_country_", "");
+    await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) memilih negara: ${countryCode}.`);
+
+    const text = `Anda memilih negara ${countryCode}. Silakan pilih jenis proksi:`;
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: "Trojan TLS", callback_data: `get_proxy_${countryCode}_trojan_tls` },
+          { text: "Trojan Non-TLS", callback_data: `get_proxy_${countryCode}_trojan_ntls` },
+        ],
+        [
+          { text: "VLESS TLS", callback_data: `get_proxy_${countryCode}_vless_tls` },
+          { text: "VLESS Non-TLS", callback_data: `get_proxy_${countryCode}_vless_ntls` },
+        ],
+        [
+          { text: "SS TLS", callback_data: `get_proxy_${countryCode}_ss_tls` },
+          { text: "SS Non-TLS", callback_data: `get_proxy_${countryCode}_ss_ntls` },
+        ],
+        [{ text: "<< Kembali (Pilih Negara)", callback_data: "get_proxies" }],
+      ],
+    };
+    await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: text, reply_markup: keyboard });
+
+  } else if (data.startsWith("get_proxy_")) {
+    const parts = data.split("_");
+    const countryCode = parts[2];
+    const protocol = parts[3];
+    const security = parts[4]; // 'tls' or 'ntls'
+    const protocolName = protocol.toUpperCase();
+    const securityName = security === 'tls' ? 'TLS' : 'Non-TLS';
+
+    await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) meminta proksi ${protocolName} ${securityName} untuk negara ${countryCode}.`);
+
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: `Mencari proksi untuk ${countryCode} dengan protokol ${protocolName} ${securityName}...`,
+    });
+
+    const proxies = await getProxiesForApi(countryCode, 15, protocol, security);
+
+    if (proxies.length === 0) {
+      await callTelegramApi("sendMessage", { chat_id: chatId, text: "Tidak ada proksi yang ditemukan untuk kombinasi ini." });
+    } else {
+      for (const proxy of proxies) {
+        await callTelegramApi("sendMessage", {
+          chat_id: chatId,
+          text: `\`${proxy}\``,
+          parse_mode: "MarkdownV2",
+        });
+      }
+      await callTelegramApi("sendMessage", { chat_id: chatId, text: `Selesai! ${proxies.length} proksi ${protocolName} ${securityName} telah dikirim.` });
+    }
+
+    // Show the menu again for further actions
+    await callTelegramApi("sendMessage", {
+        chat_id: chatId,
+        text: 'Pilih tindakan selanjutnya:',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: "Pilih Negara Lain", callback_data: "get_proxies" }],
+                [{ text: "Kembali ke Menu Utama", callback_data: "start_menu" }]
+            ]
+        }
+    });
+  }
+}
+
+// Helper function to send logs to the admin group
+async function logToAdmin(text) {
+    if (ADMIN_GROUP_ID) {
+        await callTelegramApi("sendMessage", {
+            chat_id: ADMIN_GROUP_ID,
+            text: `📝 LOG: ${text}`,
+            disable_notification: true,
+        });
+    }
+}
+
+// Helper function to get proxies, adapted from the existing API logic
+async function getProxiesForApi(countryCode, limit, protocol, security) {
+  const proxyList = await getProxyList();
+  const filtered = proxyList.filter(p => p.country === countryCode);
+  shuffleArray(filtered);
+
+  // Map protocol names from bot to worker's internal names
+  const protocolMap = {
+    'trojan': reverse("najort"),
+    'vless': reverse("sselv"),
+    'ss': reverse("ss")
+  };
+  const proto = protocolMap[protocol] || reverse("najort");
+
+  const port = security === 'tls' ? '443' : '80';
+  const securitySetting = security === 'tls' ? 'tls' : 'none';
+
+  const result = [];
+  const uuid = crypto.randomUUID();
+  for (const proxy of filtered) {
+    if (result.length >= limit) break;
+
+    const uri = new URL(`${proto}://${APP_DOMAIN}`);
+    uri.port = port;
+    uri.searchParams.set("type", "ws");
+    uri.searchParams.set("host", APP_DOMAIN);
+    uri.searchParams.set("path", `/${proxy.proxyIP}-${proxy.proxyPort}`);
+    uri.searchParams.set("security", securitySetting);
+
+    if (proto === reverse("ss")) {
+      uri.username = btoa(`none:${uuid}`);
+      uri.searchParams.set(
+        "plugin",
+        `v2ray-plugin${security === 'tls' ? ";tls" : ""};mux=0;mode=websocket;path=/${proxy.proxyIP}-${proxy.proxyPort};host=${APP_DOMAIN}`
+      );
+    } else {
+      uri.username = uuid;
+    }
+
+    if (security === 'tls') {
+        uri.searchParams.set("sni", APP_DOMAIN);
+    }
+
+    uri.hash = `${result.length + 1} ${getFlagEmoji(proxy.country)} ${proxy.org} WS ${security === 'tls' ? 'TLS' : 'NTLS'} [${serviceName}]`;
+    result.push(uri.toString());
+  }
+  return result;
+}
 
 async function websocketHandler(request) {
   const webSocketPair = new WebSocketPair();
@@ -588,7 +854,7 @@ async function handleUDPOutbound(targetAddress, targetPort, udpChunk, webSocket,
         async write(chunk) {
           if (webSocket.readyState === WS_READY_STATE_OPEN) {
             if (protocolHeader) {
-              webSocket.send(await new Blob([protocolHeader, chunk]).arrayBuffer());
+              webSocket.send(await new Blob([header, chunk]).arrayBuffer());
               protocolHeader = null;
             } else {
               webSocket.send(chunk);
