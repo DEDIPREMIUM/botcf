@@ -8,7 +8,3 @@ enabled = true
 
 [observability.logs]
 enabled = true
-
-[[kv_namespaces]]
-binding = "APPROVED_USERS"
-id = "06d1b6331dcb48018e5df3130307436f"
