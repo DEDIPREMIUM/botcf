@@ -15,7 +15,7 @@ let cachedProxyList = [];
 
 // Constant
 // --- Telegram Bot Webhook Config ---
-const BOT_TOKEN = ""; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
+const BOT_TOKEN = "7548104199:AAHoSQVeC3mqygvyX6mruRXL9EXEKZ5JZdQ"; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
 const WEBHOOK_PATH = "/webhook"; // Path rahasia untuk webhook
 const ADMIN_GROUP_ID = "-1002747373907"; // ID Grup Admin sudah diisi
 // ----------------------------------
