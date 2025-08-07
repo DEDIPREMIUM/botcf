@@ -445,11 +445,11 @@ async function callTelegramApi(methodName, params) {
   return json;
 }
 
-async function handleUpdate(update) {
+async function handleUpdate(update, env) {
   if (update.callback_query) {
-    await handleCallbackQuery(update.callback_query);
+    await handleCallbackQuery(update.callback_query, env);
   } else if (update.message) {
-    await handleMessage(update.message);
+    await handleMessage(update.message, env);
   }
 }
 
@@ -488,7 +488,8 @@ Silakan pilih menu di bawah ini.
   }
 }
 
-async function handleCallbackQuery(callbackQuery) {
+async function handleCallbackQuery(callbackQuery, env) {
+  await logToAdmin(`Callback query received: ${callbackQuery.data}`);
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const data = callbackQuery.data;
