@@ -190,17 +190,14 @@ export default {
       const url = new URL(request.url);
       const upgradeHeader = request.headers.get("Upgrade");
 
-      // Gateway check
       if (apiKey && apiEmail && accountID && zoneID) {
         isApiReady = true;
       }
 
-      // Handle proxy client
       if (upgradeHeader === "websocket") {
         const proxyMatch = url.pathname.match(/^\/(.+[:=-]\d+)$/);
 
         if (url.pathname.length == 3 || url.pathname.match(",")) {
-          // Contoh: /ID, /SG, dll
           const proxyKeys = url.pathname.replace("/", "").toUpperCase().split(",");
           const proxyKey = proxyKeys[Math.floor(Math.random() * proxyKeys.length)];
           const kvProxy = await getKVProxyList();
@@ -219,15 +216,12 @@ export default {
         const pageIndex = parseInt(page ? page[1] : "0");
         const hostname = request.headers.get("Host");
 
-        // Queries
         const countrySelect = url.searchParams.get("cc")?.split(",");
         const proxyBankUrl = url.searchParams.get("proxy-list") || env.PROXY_BANK_URL;
         let proxyList = (await getProxyList(proxyBankUrl)).filter((proxy) => {
-          // Filter proxies by Country
           if (countrySelect) {
             return countrySelect.includes(proxy.country);
           }
-
           return true;
         });
 
@@ -252,9 +246,7 @@ export default {
 
         if (apiPath.startsWith("/domains")) {
           if (!isApiReady) {
-            return new Response("Api not ready", {
-              status: 500,
-            });
+            return new Response("Api not ready", { status: 500 });
           }
 
           const wildcardApiPath = apiPath.replace("/domains", "");
@@ -263,19 +255,14 @@ export default {
           if (wildcardApiPath == "/get") {
             const domains = await cloudflareApi.getDomainList();
             return new Response(JSON.stringify(domains), {
-              headers: {
-                ...CORS_HEADER_OPTIONS,
-              },
+              headers: { ...CORS_HEADER_OPTIONS },
             });
           } else if (wildcardApiPath == "/put") {
             const domain = url.searchParams.get("domain");
             const register = await cloudflareApi.registerDomain(domain);
-
             return new Response(register.toString(), {
               status: register,
-              headers: {
-                ...CORS_HEADER_OPTIONS,
-              },
+              headers: { ...CORS_HEADER_OPTIONS },
             });
           }
         } else if (apiPath.startsWith("/sub")) {
@@ -289,14 +276,12 @@ export default {
           const proxyBankUrl = url.searchParams.get("proxy-list") || env.PROXY_BANK_URL;
           const proxyList = await getProxyList(proxyBankUrl)
             .then((proxies) => {
-              // Filter CC
               if (filterCC.length) {
                 return proxies.filter((proxy) => filterCC.includes(proxy.country));
               }
               return proxies;
             })
             .then((proxies) => {
-              // shuffle result
               shuffleArray(proxies);
               return proxies;
             });
@@ -311,7 +296,7 @@ export default {
 
             for (const port of filterPort) {
               for (const protocol of filterVPN) {
-                if (result.length >= filterLimit) break;
+                if (result.length >= limit) break;
 
                 uri.protocol = protocol;
                 uri.port = port.toString();
@@ -363,19 +348,14 @@ export default {
               } else {
                 return new Response(res.statusText, {
                   status: res.status,
-                  headers: {
-                    ...CORS_HEADER_OPTIONS,
-                  },
+                  headers: { ...CORS_HEADER_OPTIONS },
                 });
               }
               break;
           }
-
           return new Response(finalResult, {
             status: 200,
-            headers: {
-              ...CORS_HEADER_OPTIONS,
-            },
+            headers: { ...CORS_HEADER_OPTIONS },
           });
         } else if (apiPath.startsWith("/myip")) {
           return new Response(
@@ -387,11 +367,7 @@ export default {
               colo: request.headers.get("cf-ray")?.split("-")[1],
               ...request.cf,
             }),
-            {
-              headers: {
-                ...CORS_HEADER_OPTIONS,
-              },
-            }
+            { headers: { ...CORS_HEADER_OPTIONS } }
           );
         }
       } else if (url.pathname === WEBHOOK_PATH) {
@@ -414,9 +390,7 @@ export default {
       console.error(err);
       return new Response(`An error occurred: ${err.toString()}`, {
         status: 500,
-        headers: {
-          ...CORS_HEADER_OPTIONS,
-        },
+        headers: { ...CORS_HEADER_OPTIONS },
       });
     }
   },
@@ -506,6 +480,7 @@ async function handleCallbackQuery(callbackQuery, env) {
   await callTelegramApi("answerCallbackQuery", { callback_query_id: callbackQuery.id });
 
   if (data === "start_menu") {
+    await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) kembali ke menu utama.`);
     const text = "Silakan pilih salah satu menu di bawah ini:";
     const keyboard = {
       inline_keyboard: [
@@ -513,12 +488,12 @@ async function handleCallbackQuery(callbackQuery, env) {
         [{ text: "Donasi", url: DONATE_LINK }],
       ],
     };
-    await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: text, reply_markup: keyboard });
+    await callTelegramApi("editMessageCaption", { chat_id: chatId, message_id: messageId, caption: text, reply_markup: keyboard, parse_mode: "Markdown" });
 
   } else if (data === "get_proxies") {
     await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) meminta daftar negara.`);
 
-    await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: "Mengambil daftar negara yang tersedia..." });
+    await callTelegramApi("editMessageCaption", { chat_id: chatId, message_id: messageId, caption: "Mengambil daftar negara yang tersedia..." });
 
     const kvProxyList = await getKVProxyList();
     const countryCodes = Object.keys(kvProxyList);
@@ -534,10 +509,10 @@ async function handleCallbackQuery(callbackQuery, env) {
     }
     buttonRows.push([{ text: "<< Kembali ke Menu Utama", callback_data: "start_menu" }]);
 
-    await callTelegramApi("editMessageText", {
+    await callTelegramApi("editMessageCaption", {
       chat_id: chatId,
       message_id: messageId,
-      text: "Silakan pilih negara untuk proksi yang Anda inginkan:",
+      caption: "Silakan pilih negara untuk proksi yang Anda inginkan:",
       reply_markup: { inline_keyboard: buttonRows },
     });
 
@@ -563,7 +538,7 @@ async function handleCallbackQuery(callbackQuery, env) {
         [{ text: "<< Kembali (Pilih Negara)", callback_data: "get_proxies" }],
       ],
     };
-    await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: text, reply_markup: keyboard });
+    await callTelegramApi("editMessageCaption", { chat_id: chatId, message_id: messageId, caption: text, reply_markup: keyboard });
 
   } else if (data.startsWith("get_proxy_")) {
     const parts = data.split("_");
@@ -575,10 +550,10 @@ async function handleCallbackQuery(callbackQuery, env) {
 
     await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) meminta proksi ${protocolName} ${securityName} untuk negara ${countryCode}.`);
 
-    await callTelegramApi("editMessageText", {
+    await callTelegramApi("editMessageCaption", {
       chat_id: chatId,
       message_id: messageId,
-      text: `Mencari proksi untuk ${countryCode} dengan protokol ${protocolName} ${securityName}...`,
+      caption: `Mencari proksi untuk ${countryCode} dengan protokol ${protocolName} ${securityName}...`,
     });
 
     const proxies = await getProxiesForApi(countryCode, 15, protocol, security);
@@ -601,7 +576,6 @@ async function handleCallbackQuery(callbackQuery, env) {
         text: 'Pilih tindakan selanjutnya:',
         reply_markup: {
             inline_keyboard: [
-                [{ text: "Pilih Negara Lain", callback_data: "get_proxies" }],
                 [{ text: "Kembali ke Menu Utama", callback_data: "start_menu" }]
             ]
         }
