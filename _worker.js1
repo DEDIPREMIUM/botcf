@@ -3,8 +3,8 @@ import { connect } from "cloudflare:sockets";
 // import { Buffer } from "node:buffer";
 
 // Variables
-const rootDomain = "foolvpn.me"; // Ganti dengan domain utama kalian
-const serviceName = "nautica"; // Ganti dengan nama workers kalian
+const rootDomain = "ahem7553.workers.dev"; // Ganti dengan domain utama kalian
+const serviceName = "diana"; // Ganti dengan nama workers kalian
 const apiKey = ""; // Ganti dengan Global API key kalian (https://dash.cloudflare.com/profile/api-tokens)
 const apiEmail = ""; // Ganti dengan email yang kalian gunakan
 const accountID = ""; // Ganti dengan Account ID kalian (https://dash.cloudflare.com -> Klik domain yang kalian gunakan)
@@ -15,10 +15,13 @@ let cachedProxyList = [];
 
 // Constant
 // --- Telegram Bot Webhook Config ---
-const BOT_TOKEN = ""; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
+const BOT_TOKEN = "7548104199:AAHoSQVeC3mqygvyX6mruRXL9EXEKZ5JZdQ"; // ISI TOKEN BOT TELEGRAM ANDA DI SINI
 const WEBHOOK_PATH = "/webhook"; // Path rahasia untuk webhook
-const ADMIN_GROUP_ID = "-1002747373907"; // ID Grup Admin sudah diisi
+const ADMIN_GROUP_ID = "-1002747373907"; // ISI CHAT ID GRUP ADMIN ANDA DI SINI
 // ----------------------------------
+
+// In-memory state storage for registration flow
+const userStates = {}; // e.g., { "chat_id": { step: "awaiting_name", data: {} } }
 
 const APP_DOMAIN = `${serviceName}.${rootDomain}`;
 const PORTS = [443, 80];
@@ -445,20 +448,70 @@ async function callTelegramApi(methodName, params) {
   return json;
 }
 
-async function handleUpdate(update, env) {
-  if (update.callback_query) {
-    await handleCallbackQuery(update.callback_query, env);
-  } else if (update.message) {
-    await handleMessage(update.message, env);
+async function handleUpdate(update) {
+  if (update.message) {
+    await handleMessage(update.message);
+  } else if (update.callback_query) {
+    await handleCallbackQuery(update.callback_query);
   }
 }
 
 async function handleMessage(message) {
   const chatId = message.chat.id;
-  if (message.text === "/start") {
-    const user = message.from;
-    await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) memulai bot.`);
+  const state = userStates[chatId];
 
+  // Handle registration flow if user is in a specific state
+  if (state) {
+    switch (state.step) {
+      case "awaiting_name":
+        state.data.name = message.text;
+        state.step = "awaiting_email";
+        await callTelegramApi("sendMessage", { chat_id: chatId, text: "Terima kasih. Sekarang, silakan kirimkan alamat email Anda:" });
+        return; // Stop further processing
+      case "awaiting_email":
+        state.data.email = message.text;
+        state.step = "awaiting_reason";
+        await callTelegramApi("sendMessage", { chat_id: chatId, text: "Bagus. Terakhir, jelaskan secara singkat permohonan atau alasan Anda mendaftar:" });
+        return; // Stop further processing
+      case "awaiting_reason":
+        state.data.reason = message.text;
+        state.data.username = message.from.username || "tidak ada";
+        state.data.userId = message.from.id;
+
+        // Send application to admin group
+        if (ADMIN_GROUP_ID) {
+          const { name, email, reason, username, userId } = state.data;
+          const adminText = `🔔 Permohonan Baru 🔔\n\nDari: ${message.from.first_name} ${message.from.last_name || ""}\nUsername: @${username}\nUser ID: \`${userId}\`\n\nNama: ${name}\nEmail: ${email}\n\nPermohonan:\n${reason}`;
+          const adminKeyboard = {
+            inline_keyboard: [
+              [
+                { text: "✅ Setuju", callback_data: `admin_approve_${userId}` },
+                { text: "❌ Tolak", callback_data: `admin_reject_${userId}` },
+              ],
+            ],
+          };
+          await callTelegramApi("sendMessage", {
+            chat_id: ADMIN_GROUP_ID,
+            text: adminText,
+            reply_markup: adminKeyboard,
+            parse_mode: "MarkdownV2",
+          });
+        }
+
+        // Notify user and clear state
+        await callTelegramApi("sendMessage", { chat_id: chatId, text: "Terima kasih! Permohonan Anda telah dikirim ke admin untuk ditinjau." });
+        delete userStates[chatId];
+        return; // Stop further processing
+    }
+  }
+
+  if (message.text === "/start") {
+    // Clear any previous state if user restarts
+    if (state) {
+      delete userStates[chatId];
+    }
+
+    // Define the caption for the photo
     const caption = `
 Selamat datang di server *DIANA STORE*!
 
@@ -472,12 +525,18 @@ Bot ini bertujuan untuk menyediakan koneksi proksi yang aman dan stabil untuk ke
 
 Silakan pilih menu di bawah ini.
     `;
+
     const imageUrl = "https://i.postimg.cc/Kvggpvt0/b86ba0a6-87f5-4911-9982-2229e58f5d36.png";
+
     const keyboard = {
       inline_keyboard: [
-        [{ text: "✅ Saya Setuju & Lanjutkan", callback_data: "user_agreed" }],
+        [{ text: "Dapatkan Proksi", callback_data: "get_proxies" }],
+        [{ text: "Daftar ke Admin", callback_data: "register_flow_start" }],
+        [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
       ],
     };
+
+    // Send the photo with the caption and keyboard
     await callTelegramApi("sendPhoto", {
       chat_id: chatId,
       photo: imageUrl,
@@ -488,24 +547,20 @@ Silakan pilih menu di bawah ini.
   }
 }
 
-async function handleCallbackQuery(callbackQuery, env) {
-  await logToAdmin(`Callback query received: ${callbackQuery.data}`);
+async function handleCallbackQuery(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const data = callbackQuery.data;
-  const user = callbackQuery.from;
 
   // Acknowledge the callback query to remove the "loading" state on the button
   await callTelegramApi("answerCallbackQuery", { callback_query_id: callbackQuery.id });
 
-  if (data === "user_agreed" || data === "start_menu") {
-    if (data === "user_agreed") {
-        await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) menyetujui peraturan.`);
-    }
-    const text = "Silakan pilih salah satu menu di bawah ini:";
+  if (data === "start_menu") {
+    const text = "Selamat datang di Nautica Proxy Bot!\n\nSilakan pilih salah satu menu di bawah ini:";
     const keyboard = {
       inline_keyboard: [
         [{ text: "Dapatkan Proksi", callback_data: "get_proxies" }],
+        [{ text: "Daftar ke Admin", callback_data: "register_flow_start" }],
         [{ text: "Donasi", url: "https://trakteer.id/dickymuliafiqri/tip" }],
       ],
     };
@@ -513,8 +568,6 @@ async function handleCallbackQuery(callbackQuery, env) {
     await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: text, reply_markup: keyboard });
 
   } else if (data === "get_proxies") {
-    await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) meminta daftar negara.`);
-
     // Edit the message to show "Fetching countries..."
     await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: "Mengambil daftar negara yang tersedia..." });
 
@@ -530,7 +583,7 @@ async function handleCallbackQuery(callbackQuery, env) {
     for (let i = 0; i < countryButtons.length; i += chunkSize) {
       buttonRows.push(countryButtons.slice(i, i + chunkSize));
     }
-    buttonRows.push([{ text: "<< Kembali ke Menu Utama", callback_data: "start_menu" }]);
+    buttonRows.push([{ text: "Kembali ke Menu Utama", callback_data: "start_menu" }]);
 
     // Edit the message again to show the country selection
     await callTelegramApi("editMessageText", {
@@ -542,8 +595,6 @@ async function handleCallbackQuery(callbackQuery, env) {
 
   } else if (data.startsWith("get_country_")) {
     const countryCode = data.replace("get_country_", "");
-    await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) memilih negara: ${countryCode}.`);
-
     const text = `Anda memilih negara ${countryCode}. Silakan pilih jenis proksi:`;
     const keyboard = {
       inline_keyboard: [
@@ -564,15 +615,82 @@ async function handleCallbackQuery(callbackQuery, env) {
     };
     await callTelegramApi("editMessageText", { chat_id: chatId, message_id: messageId, text: text, reply_markup: keyboard });
 
+  } else if (data.startsWith("admin_")) {
+    // Handle admin actions
+    const parts = data.split("_");
+    const action = parts[1]; // 'approve' or 'reject'
+    const userId = parts[2];
+    const adminName = callbackQuery.from.first_name;
+
+    let userMessage = "";
+    let newAdminText = "";
+
+    if (action === "approve") {
+      userMessage = "Selamat! Permohonan Anda telah disetujui oleh admin.";
+      newAdminText = `${callbackQuery.message.text}\n\n✅ Disetujui oleh ${adminName}.`;
+    } else {
+      userMessage = "Mohon maaf, permohonan Anda telah ditolak oleh admin.";
+      newAdminText = `${callbackQuery.message.text}\n\n❌ Ditolak oleh ${adminName}.`;
+    }
+
+    // Notify the original user
+    await callTelegramApi("sendMessage", { chat_id: userId, text: userMessage });
+
+    // Edit the message in the admin group to show it's been handled
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: newAdminText,
+      parse_mode: "MarkdownV2",
+      reply_markup: { inline_keyboard: [] }, // Remove buttons
+    });
+
   } else if (data.startsWith("get_proxy_")) {
     const parts = data.split("_");
     const countryCode = parts[2];
     const protocol = parts[3];
     const security = parts[4]; // 'tls' or 'ntls'
+
     const protocolName = protocol.toUpperCase();
     const securityName = security === 'tls' ? 'TLS' : 'Non-TLS';
 
-    await logToAdmin(`User ${user.first_name} (@${user.username || 'N/A'}) meminta proksi ${protocolName} ${securityName} untuk negara ${countryCode}.`);
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: `Mencari proksi untuk ${countryCode} dengan protokol ${protocolName} ${securityName}...`,
+    });
+
+    const proxies = await getProxiesForApi(countryCode, 15, protocol, security);
+
+    if (proxies.length === 0) {
+      await callTelegramApi("sendMessage", { chat_id: chatId, text: "Tidak ada proksi yang ditemukan untuk kombinasi ini." });
+    } else {
+      for (const proxy of proxies) {
+        await callTelegramApi("sendMessage", {
+          chat_id: chatId,
+          text: `\`${proxy}\``,
+          parse_mode: "MarkdownV2",
+        });
+      }
+      await callTelegramApi("sendMessage", { chat_id: chatId, text: `Selesai! ${proxies.length} proksi ${protocolName} ${securityName} telah dikirim.` });
+    }
+
+  } else if (data === "register_flow_start") {
+    // Start the registration flow
+    userStates[chatId] = { step: "awaiting_name", data: {} };
+    await callTelegramApi("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: "Anda memulai proses pendaftaran.\n\nSilakan kirimkan nama lengkap Anda:",
+    });
+  } else if (data.startsWith("get_proxy_")) {
+    const parts = data.split("_");
+    const countryCode = parts[2];
+    const protocol = parts[3];
+    const security = parts[4]; // 'tls' or 'ntls'
+
+    const protocolName = protocol.toUpperCase();
+    const securityName = security === 'tls' ? 'TLS' : 'Non-TLS';
 
     await callTelegramApi("editMessageText", {
       chat_id: chatId,
@@ -607,17 +725,6 @@ async function handleCallbackQuery(callbackQuery, env) {
         }
     });
   }
-}
-
-// Helper function to send logs to the admin group
-async function logToAdmin(text) {
-    if (ADMIN_GROUP_ID) {
-        await callTelegramApi("sendMessage", {
-            chat_id: ADMIN_GROUP_ID,
-            text: `📝 LOG: ${text}`,
-            disable_notification: true,
-        });
-    }
 }
 
 // Helper function to get proxies, adapted from the existing API logic
@@ -854,7 +961,7 @@ async function handleUDPOutbound(targetAddress, targetPort, udpChunk, webSocket,
         async write(chunk) {
           if (webSocket.readyState === WS_READY_STATE_OPEN) {
             if (protocolHeader) {
-              webSocket.send(await new Blob([header, chunk]).arrayBuffer());
+              webSocket.send(await new Blob([protocolHeader, chunk]).arrayBuffer());
               protocolHeader = null;
             } else {
               webSocket.send(chunk);
